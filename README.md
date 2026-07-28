@@ -11,13 +11,13 @@ ChatGPT (OpenAI) / Claude (Anthropic) / Gemini (Google) のモデルについて
 | データベース | Supabase (PostgreSQL) |
 | 認証 | NextAuth v5 (Auth.js) — メールアドレス + パスワード |
 | メール送信 | Resend |
-| 定期実行 | Vercel Cron(毎日 0:00 UTC = 日本時間 9:00) |
+| 定期実行 | GitHub Actions(毎日 0:00 UTC = 日本時間 9:00) |
 | スクレイピング | cheerio |
 
 ## 仕組み
 
 1. ユーザーがアカウント登録し、監視したいモデル(例: `gpt-4o`)をプロバイダーと共に登録する
-2. Vercel Cron が毎日 `/api/cron/check-deprecations` を呼び出す
+2. GitHub Actions が毎日 `/api/cron/check-deprecations` を呼び出す
 3. 各社の公式 Deprecation ページを取得し、登録モデルの提供終了日を探す
    - OpenAI: <https://platform.openai.com/docs/deprecations>
    - Anthropic: <https://platform.claude.com/docs/en/about-claude/model-deprecations>
@@ -86,8 +86,22 @@ curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/chec
 
 1. リポジトリを Vercel にインポート
 2. 上記の環境変数をすべて Vercel の **Environment Variables** に設定
-   - `CRON_SECRET` を設定すると、Vercel Cron の呼び出しに自動で `Authorization: Bearer <CRON_SECRET>` ヘッダーが付与されます
-3. デプロイすると [vercel.json](vercel.json) の設定により、毎日 0:00 UTC に自動チェックが実行されます
+   - 適用環境(Production / Preview)はデプロイに使うブランチに合わせてチェックすること
+
+## 定期実行(GitHub Actions)
+
+[.github/workflows/check-deprecations.yml](.github/workflows/check-deprecations.yml) が毎日 0:00 UTC(日本時間 9:00)にデプロイ先のチェック API を呼び出します。
+
+GitHub リポジトリの **Settings → Secrets and variables → Actions → New repository secret** で以下の2つを設定してください。
+
+| Secret | 値 |
+|---|---|
+| `APP_URL` | デプロイ先の URL(例: `https://your-app.vercel.app`) |
+| `CRON_SECRET` | Vercel の環境変数 `CRON_SECRET` と同じ値 |
+
+設定後、**Actions タブ → Check LLM deprecations → Run workflow** で手動実行して動作確認できます。
+
+注意: GitHub Actions の schedule 実行は、デフォルトブランチに置かれたワークフローのみが対象です(手動実行はどのブランチでも可能)。
 
 ## 主要ファイル
 

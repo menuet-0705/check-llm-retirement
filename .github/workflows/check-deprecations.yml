@@ -1,0 +1,38 @@
+name: Check LLM deprecations
+
+on:
+  schedule:
+    # 毎日 0:00 UTC(日本時間 9:00)に実行
+    - cron: "0 0 * * *"
+  # 手動実行も可能(Actions タブの Run workflow ボタン)
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Call check endpoint
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::リポジトリの Secrets に APP_URL と CRON_SECRET を設定してください"
+            exit 1
+          fi
+
+          response=$(curl -sS --max-time 300 -w "\n%{http_code}" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "${APP_URL%/}/api/cron/check-deprecations")
+
+          http_code=$(echo "$response" | tail -n 1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP $http_code"
+          echo "$body"
+
+          if [ "$http_code" != "200" ]; then
+            echo "::error::チェック API がエラーを返しました (HTTP $http_code)"
+            exit 1
+          fi
