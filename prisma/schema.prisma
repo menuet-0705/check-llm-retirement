@@ -18,6 +18,8 @@ model User {
   email         String         @unique
   passwordHash  String
   name          String?
+  // 利用規約に同意した日時(登録時に必ず記録)
+  termsAgreedAt DateTime?
   createdAt     DateTime       @default(now())
   watchedModels WatchedModel[]
 }

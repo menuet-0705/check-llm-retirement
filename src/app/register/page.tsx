@@ -10,6 +10,7 @@ export default function RegisterPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -18,23 +19,28 @@ export default function RegisterPage() {
     setError(null);
     setLoading(true);
 
-    const res = await fetch("/api/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, password }),
-    });
+    try {
+      const res = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, password, agreed }),
+      });
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      setError(data?.error ?? "登録に失敗しました");
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setError(data?.error ?? "登録に失敗しました");
+        return;
+      }
+
+      // 登録後そのままログイン
+      await signIn("credentials", { email, password, redirect: false });
+      router.push("/dashboard");
+      router.refresh();
+    } catch {
+      setError("通信エラーが発生しました。時間をおいて再度お試しください");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    // 登録後そのままログイン
-    await signIn("credentials", { email, password, redirect: false });
-    router.push("/dashboard");
-    router.refresh();
   }
 
   return (
@@ -87,6 +93,26 @@ export default function RegisterPage() {
               className="w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none dark:border-zinc-700"
             />
           </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              required
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <Link
+                href="/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium underline"
+              >
+                利用規約
+              </Link>
+              に同意します
+            </span>
+          </label>
           {error && <p className="text-sm text-red-600">{error}</p>}
           <button
             type="submit"
