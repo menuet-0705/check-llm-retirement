@@ -54,7 +54,7 @@ export default async function DashboardPage() {
           <input
             name="modelName"
             required
-            placeholder="例: gpt-4o, claude-sonnet-4-5, gemini-1.5-pro"
+            placeholder="例: gpt-4o-2024-11-20, claude-opus-4-1-20250805, gemini-2.5-flash"
             className="flex-1 rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm dark:border-zinc-700"
           />
           <button
@@ -66,7 +66,8 @@ export default async function DashboardPage() {
         </form>
         <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
           各社の公式 Deprecation ページを1日1回チェックし、提供終了日が公開されたらメールで通知します。
-          モデル名は公式ページの表記(API のモデルID)に合わせて入力してください。
+          モデル名は公式ページの表記(API のモデルID)と完全一致で照合されます。
+          日付付きスナップショット(例: gpt-4o-2024-11-20)を監視する場合はその名前をそのまま入力してください。
         </p>
       </section>
 

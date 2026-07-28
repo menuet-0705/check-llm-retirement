@@ -8,10 +8,10 @@ export const DEPRECATION_SOURCES: Record<Provider, string[]> = {
   ANTHROPIC: [
     "https://platform.claude.com/docs/en/about-claude/model-deprecations",
   ],
-  GOOGLE: [
-    "https://ai.google.dev/gemini-api/docs/deprecations",
-    "https://ai.google.dev/gemini-api/docs/changelog",
-  ],
+  // changelog はリリース告知と廃止告知が混在していて誤検出のもとになるため、
+  // 専用の deprecations ページのみを情報源にする。
+  // hl=en は必須: 指定しないと他言語版が返ることがあり、日付が抽出できない
+  GOOGLE: ["https://ai.google.dev/gemini-api/docs/deprecations?hl=en"],
 };
 
 export interface RetirementInfo {
@@ -32,8 +32,9 @@ const MONTHS: Record<string, number> = {
 export function extractDates(text: string): Date[] {
   const dates: Date[] = [];
 
-  // 前後に数字が続く場合は除外(例: "20250514" の一部を拾わない)
-  const iso = text.matchAll(/(?<!\d)(20\d{2})[-/](\d{1,2})[-/](\d{1,2})(?!\d)/g);
+  // 前後に数字が続く場合と、直前がハイフンの場合は除外
+  // (例: "20250514" の一部や、モデルID "gpt-4o-2024-05-13" 内の日付を拾わない)
+  const iso = text.matchAll(/(?<![\d-])(20\d{2})[-/](\d{1,2})[-/](\d{1,2})(?!\d)/g);
   for (const m of iso) {
     const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
     if (!isNaN(d.getTime())) dates.push(d);
@@ -53,17 +54,16 @@ export function extractDates(text: string): Date[] {
   return dates;
 }
 
-/** 日付スナップショット等のサフィックス(-20250514 / -001 / -2024-05-13)か */
-const SNAPSHOT_SUFFIX = /^-(?:\d{8}|\d{3}|\d{4}-\d{2}-\d{2})$/;
-
 /**
  * 行テキストに対象モデルが載っているか、トークン単位の完全一致で判定する。
  * 部分一致にしないのは "gemini-2.5-flash" が "gemini-2.5-flash-lite" の行に
- * 誤マッチするのを防ぐため。同一モデルの日付付きスナップショット
- * (例: claude-sonnet-4-5 と claude-sonnet-4-5-20250929)は一致とみなす。
+ * 誤マッチするのを防ぐため。日付付きスナップショット
+ * (例: gpt-4o に対する gpt-4o-2024-11-20)も別モデルとして扱う。
+ * スナップショットを監視したい場合はその名前をそのまま登録する。
  */
 export function modelMatches(text: string, modelName: string): boolean {
-  const q = modelName.trim().toLowerCase();
+  // 末尾の句読点・ハイフンはユーザーの入力ミスとみなして無視する
+  const q = modelName.trim().toLowerCase().replace(/[.-]+$/, "");
   const qNorm = q.replace(/[^a-z0-9.]/g, "");
   if (!qNorm) return false;
 
@@ -72,13 +72,14 @@ export function modelMatches(text: string, modelName: string): boolean {
     const tok = raw.replace(/[.-]+$/, "");
     if (tok === q) return true;
     // 表記ゆれ(GPT-4o と gpt-4o、区切り文字の違い)を吸収
-    if (tok.replace(/[^a-z0-9.]/g, "") === qNorm) return true;
-    if (tok.startsWith(q) && SNAPSHOT_SUFFIX.test(tok.slice(q.length))) {
-      return true;
-    }
-    return false;
+    return tok.replace(/[^a-z0-9.]/g, "") === qNorm;
   });
 }
+
+// 外部サイトは信頼できない入力として扱う: 応答遅延や巨大レスポンスで
+// Cron 実行全体が道連れにならないよう、タイムアウトとサイズ上限を設ける
+const FETCH_TIMEOUT_MS = 15_000;
+const MAX_HTML_BYTES = 5 * 1024 * 1024;
 
 async function fetchHtml(url: string): Promise<string | null> {
   try {
@@ -87,7 +88,10 @@ async function fetchHtml(url: string): Promise<string | null> {
         "User-Agent":
           "Mozilla/5.0 (compatible; llm-retirement-checker/1.0)",
         Accept: "text/html,application/xhtml+xml",
+        // 日付抽出は英語表記前提のため、必ず英語版ページを要求する
+        "Accept-Language": "en",
       },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       // Next.js の fetch キャッシュを無効化(Cron 実行時は常に最新を取得)
       cache: "no-store",
     });
@@ -95,7 +99,17 @@ async function fetchHtml(url: string): Promise<string | null> {
       console.warn(`[scraper] ${url} -> HTTP ${res.status}`);
       return null;
     }
-    return await res.text();
+    const contentLength = Number(res.headers.get("content-length") ?? 0);
+    if (contentLength > MAX_HTML_BYTES) {
+      console.warn(`[scraper] ${url} -> too large (${contentLength} bytes)`);
+      return null;
+    }
+    const html = await res.text();
+    if (html.length > MAX_HTML_BYTES) {
+      console.warn(`[scraper] ${url} -> too large (${html.length} chars)`);
+      return null;
+    }
+    return html;
   } catch (e) {
     console.warn(`[scraper] fetch failed: ${url}`, e);
     return null;
@@ -110,24 +124,36 @@ function findInHtml(html: string, modelName: string): { date: Date; snippet: str
   const $ = cheerio.load(html);
   const candidates: { date: Date; snippet: string }[] = [];
 
+  const clean = (s: string) => s.replace(/\s+/g, " ").trim();
+
   $("tr, li, p").each((_, el) => {
     // テーブル行はセル毎にテキストを取り出して空白で連結する
     // (そのまま .text() するとセル間が密着して日付やモデル名が壊れるため)
     const cells = $(el).children("td, th");
-    const text = (
-      cells.length > 0
-        ? cells.map((_, c) => $(c).text()).get().join(" ")
-        : $(el).text()
-    )
-      .replace(/\s+/g, " ")
-      .trim();
+    const cellTexts =
+      cells.length > 0 ? cells.map((_, c) => clean($(c).text())).get() : [];
+    const text =
+      cellTexts.length > 0 ? cellTexts.join(" ") : clean($(el).text());
 
     if (!text || text.length > 1000) return;
-    if (!modelMatches(text, modelName)) return;
+
+    // 廃止テーブルの最終列は「推奨移行先」であることが多い
+    // (例: OpenAI の "2025-06-06 | gpt-4-32k | 価格 | gpt-4o")。
+    // 移行先として載っただけのモデルを廃止と誤検出しないよう、
+    // 3列以上の行では最終列をモデル名の照合対象から外す。
+    const matchTarget =
+      cellTexts.length >= 3 ? cellTexts.slice(0, -1).join(" ") : text;
+    if (!modelMatches(matchTarget, modelName)) return;
 
     // Anthropic の "Not sooner than <date>" はアクティブなモデルの
     // 「最短でもこの日までは提供」という表記で、廃止日の公開ではない
     if (/not sooner than/i.test(text)) return;
+
+    // Google の "No shutdown date announced" 等、廃止日が未発表の行は
+    // 対象外(残っている日付はリリース日なので拾ってはいけない)
+    if (/no shutdown date|not( yet)?( been)? announced|to be announced/i.test(text)) {
+      return;
+    }
 
     // 散文(リスト・段落)はリリース告知等も含むため、廃止系の
     // キーワードを含む場合のみ採用する。専用ページのテーブル行は

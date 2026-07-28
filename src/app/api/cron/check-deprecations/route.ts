@@ -1,19 +1,27 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { findRetirementInfo } from "@/lib/scraper";
+import { DEPRECATION_SOURCES, findRetirementInfo } from "@/lib/scraper";
 import { sendRetirementNotice } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
+
 /**
- * 1日1回 Vercel Cron から呼ばれるエンドポイント。
+ * 1日1回、外部スケジューラ(GitHub Actions)から呼ばれるエンドポイント。
  * 全ユーザーの監視対象モデルについて公式 Deprecation ページをチェックし、
  * 廃止日が新たに公開(または変更)されたものをメールで通知する。
  */
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
-  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
+  const authHeader = req.headers.get("authorization") ?? "";
+  if (!secret || !safeEqual(authHeader, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -39,9 +47,32 @@ export async function GET(req: Request) {
       );
 
       if (!info) {
+        // ページ自体は取得できたのに見つからなくなった場合、過去に検出した
+        // 廃止日は古い情報としてクリアする。ただしページの一時的な不調
+        // (200 だが中身が壊れている等)で消してしまうと復旧時に同じ通知が
+        // 再送されるため、3回連続で見つからなかった場合のみクリアする。
+        // 取得失敗時(htmlCache が null)はカウントも進めず保持する。
+        const pageFetched = DEPRECATION_SOURCES[model.provider].some((url) =>
+          htmlCache.get(url)
+        );
+        const missCount = pageFetched ? model.missCount + 1 : model.missCount;
+        const shouldClear =
+          pageFetched && model.retirementDate !== null && missCount >= 3;
         await prisma.watchedModel.update({
           where: { id: model.id },
-          data: { lastCheckedAt: now },
+          data: {
+            lastCheckedAt: now,
+            missCount,
+            ...(shouldClear
+              ? {
+                  retirementDate: null,
+                  sourceUrl: null,
+                  snippet: null,
+                  notifiedAt: null,
+                  missCount: 0,
+                }
+              : {}),
+          },
         });
         continue;
       }
@@ -70,12 +101,14 @@ export async function GET(req: Request) {
           sourceUrl: info.sourceUrl,
           snippet: info.snippet,
           lastCheckedAt: now,
+          missCount: 0,
           ...(shouldNotify ? { notifiedAt: now } : {}),
         },
       });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      errors.push(`${model.provider}/${model.modelName}: ${msg}`);
+      // 内部エラーの詳細(DB接続情報等が混ざりうる)はログのみに出し、
+      // レスポンスには失敗したモデルの識別情報だけを返す
+      errors.push(`${model.provider}/${model.modelName}: check failed`);
       console.error(`[cron] check failed for ${model.modelName}`, e);
     }
   }

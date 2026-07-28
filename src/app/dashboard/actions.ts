@@ -16,6 +16,10 @@ export async function addWatchedModel(formData: FormData) {
   if (!provider || !(provider in Provider) || !modelName) {
     return;
   }
+  // API のモデルID形式のみ許可(メール件名にも展開されるため長さ・文字種を制限)
+  if (!/^[a-z0-9][a-z0-9.-]{0,99}$/i.test(modelName)) {
+    return;
+  }
 
   await prisma.watchedModel.upsert({
     where: {

@@ -21,12 +21,12 @@ ChatGPT (OpenAI) / Claude (Anthropic) / Gemini (Google) のモデルについて
 3. 各社の公式 Deprecation ページを取得し、登録モデルの提供終了日を探す
    - OpenAI: <https://platform.openai.com/docs/deprecations>
    - Anthropic: <https://platform.claude.com/docs/en/about-claude/model-deprecations>
-   - Google: <https://ai.google.dev/gemini-api/docs/deprecations>(+ changelog)
+   - Google: <https://ai.google.dev/gemini-api/docs/deprecations>
 4. 提供終了日が新たに公開(または変更)されていたら、Resend でユーザーにメール通知
 
 補足:
 
-- モデル名は**トークン単位の完全一致**で照合します(`gemini-2.5-flash` が `gemini-2.5-flash-lite` の行に誤マッチしない)。日付付きスナップショット(`claude-opus-4-1` ↔ `claude-opus-4-1-20250805`)は同一モデルとして扱います。
+- モデル名は**トークン単位の完全一致**で照合します(`gemini-2.5-flash` が `gemini-2.5-flash-lite` の行に誤マッチしない)。日付付きスナップショット(例: `gpt-4o` に対する `gpt-4o-2024-11-20`)も**別モデル**として扱うため、スナップショットを監視したい場合はその名前をそのまま登録してください。
 - Anthropic の「Not sooner than ...」(アクティブモデルの最短提供保証日)は廃止日として扱いません。
 - スクレイピングは公式ページの構成変更で動かなくなる可能性があります。その場合は [src/lib/scraper.ts](src/lib/scraper.ts) の `DEPRECATION_SOURCES` と抽出ロジックを調整してください。
 

@@ -33,6 +33,8 @@ model WatchedModel {
   snippet        String?
   notifiedAt     DateTime?
   lastCheckedAt  DateTime?
+  // ページ取得に成功したのに検出できなかった連続回数(フラッピング対策)
+  missCount      Int       @default(0)
   createdAt      DateTime  @default(now())
 
   @@unique([userId, provider, modelName])
