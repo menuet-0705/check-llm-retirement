@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },
+  // プロキシ配下(Vercel等)でも Host ヘッダーを信頼して URL を自動判定する
+  trustHost: true,
   pages: {
     signIn: "/login",
   },
