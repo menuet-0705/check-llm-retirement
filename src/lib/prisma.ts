@@ -4,6 +4,11 @@ import { PrismaPg } from "@prisma/adapter-pg";
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 function createClient() {
+  if (!process.env.DATABASE_URL) {
+    throw new Error(
+      "DATABASE_URL が設定されていません (.env を確認してサーバーを再起動してください)"
+    );
+  }
   const adapter = new PrismaPg({
     connectionString: process.env.DATABASE_URL,
   });
