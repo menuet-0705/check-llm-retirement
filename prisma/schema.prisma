@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Provider {
+  OPENAI
+  ANTHROPIC
+  GOOGLE
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String
+  name          String?
+  createdAt     DateTime       @default(now())
+  watchedModels WatchedModel[]
+}
+
+model WatchedModel {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider       Provider
+  modelName      String
+  retirementDate DateTime?
+  sourceUrl      String?
+  snippet        String?
+  notifiedAt     DateTime?
+  lastCheckedAt  DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@unique([userId, provider, modelName])
+}
