@@ -7,6 +7,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },
   // プロキシ配下(Vercel等)でも Host ヘッダーを信頼して URL を自動判定する
   trustHost: true,
+  // 環境変数の自動検出に頼らず明示的に渡す(v4 の NEXTAUTH_SECRET 名も許容)
+  secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
   pages: {
     signIn: "/login",
   },
