@@ -4,7 +4,7 @@ import type { Provider } from "@/generated/prisma/enums";
 // 各プロバイダーの公式 Deprecation(廃止予定)情報ページ。
 // ページ構成が変わった場合はここの URL を更新する。
 export const DEPRECATION_SOURCES: Record<Provider, string[]> = {
-  OPENAI: ["https://platform.openai.com/docs/deprecations"],
+  OPENAI: ["https://developers.openai.com/api/docs/deprecations"],
   ANTHROPIC: [
     "https://platform.claude.com/docs/en/about-claude/model-deprecations",
   ],
@@ -31,31 +31,61 @@ export interface RetirementMatch extends RetirementInfo {
 }
 
 const MONTHS: Record<string, number> = {
-  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
-  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
 };
 
-/** テキスト中の日付("2025-10-27" / "October 27, 2025" 形式)をすべて抽出する */
+/** 実在するUTC日付だけを生成する(Dateによる翌月への自動繰り上がりを防ぐ)。 */
+function createUtcDate(year: number, month: number, day: number): Date | null {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return date;
+}
+
+/**
+ * テキスト中の日付("2025-10-27" / "2025‑10‑27" /
+ * "October 27, 2025" / "Oct 27, 2025"形式)をすべて抽出する。
+ */
 export function extractDates(text: string): Date[] {
   const dates: Date[] = [];
 
+  // ASCII以外に、公式ページで使われるnon-breaking hyphen等も区切りとして許可する。
   // 前後に数字が続く場合と、直前がハイフンの場合は除外
   // (例: "20250514" の一部や、モデルID "gpt-4o-2024-05-13" 内の日付を拾わない)
-  const iso = text.matchAll(/(?<![\d-])(20\d{2})[-/](\d{1,2})[-/](\d{1,2})(?!\d)/g);
+  const iso = text.matchAll(
+    /(?<![\d\-\u2010-\u2015\u2212])(20\d{2})[\-\/\u2010-\u2015\u2212](\d{1,2})[\-\/\u2010-\u2015\u2212](\d{1,2})(?!\d)/g
+  );
   for (const m of iso) {
-    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-    if (!isNaN(d.getTime())) dates.push(d);
+    const date = createUtcDate(Number(m[1]), Number(m[2]), Number(m[3]));
+    if (date) dates.push(date);
   }
 
-  // 英語表記。テーブルセルの連結で "RetiredApril 14, 2026June 15, 2026" の
+  // 英語の完全月名と3文字略称に対応する。テーブルセルの連結で
+  // "RetiredApril 14, 2026June 15, 2026" の
   // ように前後が単語と密着することがあるため、単語境界(\b)は使わない。
   const en = text.matchAll(
-    /(January|February|March|April|May|June|July|August|September|October|November|December)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2})(?!\d)/gi
+    /(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?|tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2})(?!\d)/gi
   );
   for (const m of en) {
-    const month = MONTHS[m[1].toLowerCase()];
-    const d = new Date(Date.UTC(Number(m[3]), month - 1, Number(m[2])));
-    if (!isNaN(d.getTime())) dates.push(d);
+    const month = MONTHS[m[1].slice(0, 3).toLowerCase()];
+    const date = createUtcDate(Number(m[3]), month, Number(m[2]));
+    if (date) dates.push(date);
   }
 
   return dates;

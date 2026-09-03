@@ -2,11 +2,58 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEPRECATION_SOURCES,
+  extractDates,
   findModelMatches,
   findRetirementInfo,
   findRetirementMatches,
   modelMatches,
 } from "../src/lib/scraper.ts";
+
+test("OpenAIで使われる月略称の日付を抽出する", () => {
+  assert.deepEqual(
+    extractDates("Feb 26, 2027 / Jan 20, 2027 / Dec. 11, 2026").map((date) =>
+      date.toISOString()
+    ),
+    [
+      "2027-02-26T00:00:00.000Z",
+      "2027-01-20T00:00:00.000Z",
+      "2026-12-11T00:00:00.000Z",
+    ]
+  );
+});
+
+test("Unicodeハイフンを使ったISO日付を抽出する", () => {
+  assert.deepEqual(
+    extractDates("2026‑08‑26").map((date) => date.toISOString()),
+    ["2026-08-26T00:00:00.000Z"]
+  );
+});
+
+test("存在しない日付やモデルID内の日付を抽出しない", () => {
+  assert.deepEqual(extractDates("2026-02-30"), []);
+  assert.deepEqual(extractDates("gpt-4o-2024-11-20"), []);
+});
+
+test("OpenAIの月略称を使った表から提供終了日を取得する", async () => {
+  const sourceUrl = DEPRECATION_SOURCES.OPENAI[0];
+  const htmlCache = new Map([
+    [
+      sourceUrl,
+      `<table><tr>
+        <td>Feb 26, 2027</td>
+        <td>gpt-4o-transcribe</td>
+        <td>gpt-transcribe</td>
+      </tr></table>`,
+    ],
+  ]);
+
+  const info = await findRetirementInfo(
+    "OPENAI",
+    "gpt-4o-transcribe",
+    htmlCache
+  );
+  assert.equal(info?.date.toISOString(), "2027-02-26T00:00:00.000Z");
+});
 
 test("登録モデルそのものを完全一致として検出する", () => {
   assert.deepEqual(findModelMatches("Deprecated: GPT-4o", "gpt-4o"), [
