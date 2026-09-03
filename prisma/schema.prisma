@@ -25,19 +25,21 @@ model User {
 }
 
 model WatchedModel {
-  id             String    @id @default(cuid())
-  userId         String
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  provider       Provider
-  modelName      String
-  retirementDate DateTime?
-  sourceUrl      String?
-  snippet        String?
-  notifiedAt     DateTime?
-  lastCheckedAt  DateTime?
+  id                  String    @id @default(cuid())
+  userId              String
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider            Provider
+  modelName           String
+  retirementDate      DateTime?
+  sourceUrl           String?
+  snippet             String?
+  notifiedAt          DateTime?
+  // 日付付きバージョンの通知済みキー (モデルID|提供終了日のISO文字列)
+  notifiedPartialKeys String[]  @default([])
+  lastCheckedAt       DateTime?
   // ページ取得に成功したのに検出できなかった連続回数(フラッピング対策)
-  missCount      Int       @default(0)
-  createdAt      DateTime  @default(now())
+  missCount           Int       @default(0)
+  createdAt           DateTime  @default(now())
 
   @@unique([userId, provider, modelName])
 }

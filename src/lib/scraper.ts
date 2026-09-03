@@ -23,6 +23,13 @@ export interface RetirementInfo {
   snippet: string;
 }
 
+export interface RetirementMatch extends RetirementInfo {
+  /** 登録モデルそのものか、登録モデルの日付付きバージョンか */
+  matchType: "EXACT" | "DATED_VARIANT";
+  /** 公式ページに記載されていたモデルID */
+  matchedModelName: string;
+}
+
 const MONTHS: Record<string, number> = {
   january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
   july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
@@ -62,18 +69,58 @@ export function extractDates(text: string): Date[] {
  * スナップショットを監視したい場合はその名前をそのまま登録する。
  */
 export function modelMatches(text: string, modelName: string): boolean {
+  return findModelMatches(text, modelName).some(
+    (match) => match.matchType === "EXACT"
+  );
+}
+
+/**
+ * 完全一致に加え、登録モデルへ日付だけを付加したスナップショットを検出する。
+ * 例: gpt-4o -> gpt-4o-2024-11-20
+ *     claude-opus-4-1 -> claude-opus-4-1-20250805
+ *
+ * gpt-4o-mini-2024-07-18 のように、モデル名と日付の間へ別の名前が
+ * 挟まるものは gpt-4o の日付付き版とはみなさない。
+ */
+export function findModelMatches(
+  text: string,
+  modelName: string
+): Pick<RetirementMatch, "matchType" | "matchedModelName">[] {
   // 末尾の句読点・ハイフンはユーザーの入力ミスとみなして無視する
   const q = modelName.trim().toLowerCase().replace(/[.-]+$/, "");
   const qNorm = q.replace(/[^a-z0-9.]/g, "");
-  if (!qNorm) return false;
+  if (!qNorm) return [];
 
-  const tokens = text.toLowerCase().match(/[a-z0-9][a-z0-9.-]*/g) ?? [];
-  return tokens.some((raw) => {
-    const tok = raw.replace(/[.-]+$/, "");
-    if (tok === q) return true;
-    // 表記ゆれ(GPT-4o と gpt-4o、区切り文字の違い)を吸収
-    return tok.replace(/[^a-z0-9.]/g, "") === qNorm;
-  });
+  const tokens = text.match(/[a-z0-9][a-z0-9.-]*/gi) ?? [];
+  const matches = new Map<
+    string,
+    Pick<RetirementMatch, "matchType" | "matchedModelName">
+  >();
+
+  for (const raw of tokens) {
+    const matchedModelName = raw.replace(/[.-]+$/, "");
+    const tok = matchedModelName.toLowerCase();
+    const tokNorm = tok.replace(/[^a-z0-9.]/g, "");
+
+    if (tok === q || tokNorm === qNorm) {
+      matches.set(`EXACT:${tok}`, { matchType: "EXACT", matchedModelName });
+      continue;
+    }
+
+    // OpenAI 等の YYYY-MM-DD と Anthropic の YYYYMMDD に対応する。
+    const dated = tok.match(/^(.*)-(20\d{2}-\d{2}-\d{2}|20\d{6})$/);
+    if (!dated) continue;
+
+    const baseNorm = dated[1].replace(/[^a-z0-9.]/g, "");
+    if (baseNorm === qNorm) {
+      matches.set(`DATED_VARIANT:${tok}`, {
+        matchType: "DATED_VARIANT",
+        matchedModelName,
+      });
+    }
+  }
+
+  return [...matches.values()];
 }
 
 // 外部サイトは信頼できない入力として扱う: 応答遅延や巨大レスポンスで
@@ -120,9 +167,9 @@ async function fetchHtml(url: string): Promise<string | null> {
  * HTML からモデル名を含む行(テーブル行・リスト項目・段落)を探し、
  * その行に含まれる日付のうち最も遅いもの(= 提供終了日である可能性が高い)を返す。
  */
-function findInHtml(html: string, modelName: string): { date: Date; snippet: string } | null {
+function findInHtml(html: string, modelName: string): RetirementMatch[] {
   const $ = cheerio.load(html);
-  const candidates: { date: Date; snippet: string }[] = [];
+  const candidates: RetirementMatch[] = [];
 
   const clean = (s: string) => s.replace(/\s+/g, " ").trim();
 
@@ -143,7 +190,8 @@ function findInHtml(html: string, modelName: string): { date: Date; snippet: str
     // 3列以上の行では最終列をモデル名の照合対象から外す。
     const matchTarget =
       cellTexts.length >= 3 ? cellTexts.slice(0, -1).join(" ") : text;
-    if (!modelMatches(matchTarget, modelName)) return;
+    const modelMatches = findModelMatches(matchTarget, modelName);
+    if (modelMatches.length === 0) return;
 
     // Anthropic の "Not sooner than <date>" はアクティブなモデルの
     // 「最短でもこの日までは提供」という表記で、廃止日の公開ではない
@@ -170,12 +218,24 @@ function findInHtml(html: string, modelName: string): { date: Date; snippet: str
 
     // 行内の最も遅い日付を採用(廃止予定日 → 提供終了日の順で並ぶことが多いため)
     const latest = dates.reduce((a, b) => (a > b ? a : b));
-    candidates.push({ date: latest, snippet: text.slice(0, 500) });
+    for (const match of modelMatches) {
+      candidates.push({
+        ...match,
+        date: latest,
+        sourceUrl: "",
+        snippet: text.slice(0, 500),
+      });
+    }
   });
 
-  if (candidates.length === 0) return null;
-  // 複数行にマッチした場合も最も遅い日付を採用
-  return candidates.reduce((a, b) => (a.date > b.date ? a : b));
+  // 同じモデルが散文とテーブルの両方に現れる場合は、最も遅い日付を採用する。
+  const unique = new Map<string, RetirementMatch>();
+  for (const candidate of candidates) {
+    const key = `${candidate.matchType}:${candidate.matchedModelName.toLowerCase()}`;
+    const previous = unique.get(key);
+    if (!previous || candidate.date > previous.date) unique.set(key, candidate);
+  }
+  return [...unique.values()];
 }
 
 /**
@@ -189,6 +249,19 @@ export async function findRetirementInfo(
   modelName: string,
   htmlCache?: Map<string, string | null>
 ): Promise<RetirementInfo | null> {
+  const matches = await findRetirementMatches(provider, modelName, htmlCache);
+  const exact = matches.filter((match) => match.matchType === "EXACT");
+  if (exact.length === 0) return null;
+  return exact.reduce((a, b) => (a.date > b.date ? a : b));
+}
+
+/** 登録モデルの完全一致と、日付付きバージョンの廃止情報をすべて返す。 */
+export async function findRetirementMatches(
+  provider: Provider,
+  modelName: string,
+  htmlCache?: Map<string, string | null>
+): Promise<RetirementMatch[]> {
+  const matches: RetirementMatch[] = [];
   for (const url of DEPRECATION_SOURCES[provider]) {
     let html: string | null | undefined = htmlCache?.get(url);
     if (html === undefined) {
@@ -197,10 +270,10 @@ export async function findRetirementInfo(
     }
     if (!html) continue;
 
-    const found = findInHtml(html, modelName);
-    if (found) {
-      return { ...found, sourceUrl: url };
+    for (const found of findInHtml(html, modelName)) {
+      matches.push({ ...found, sourceUrl: url });
     }
   }
-  return null;
+
+  return matches;
 }

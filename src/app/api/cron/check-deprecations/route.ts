@@ -1,8 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { DEPRECATION_SOURCES, findRetirementInfo } from "@/lib/scraper";
-import { sendRetirementNotice } from "@/lib/email";
+import { DEPRECATION_SOURCES, findRetirementMatches } from "@/lib/scraper";
+import { sendDatedVariantNotice, sendRetirementNotice } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -40,11 +40,18 @@ export async function GET(req: Request) {
   for (const model of models) {
     checked++;
     try {
-      const info = await findRetirementInfo(
+      const matches = await findRetirementMatches(
         model.provider,
         model.modelName,
         htmlCache
       );
+      const exactMatches = matches.filter(
+        (match) => match.matchType === "EXACT"
+      );
+      const info =
+        exactMatches.length > 0
+          ? exactMatches.reduce((a, b) => (a.date > b.date ? a : b))
+          : null;
 
       if (!info) {
         // ページ自体は取得できたのに見つからなくなった場合、過去に検出した
@@ -74,37 +81,61 @@ export async function GET(req: Request) {
               : {}),
           },
         });
-        continue;
+      } else {
+        found++;
+        const dateChanged =
+          !model.retirementDate ||
+          model.retirementDate.getTime() !== info.date.getTime();
+        const shouldNotify = !model.notifiedAt || dateChanged;
+
+        if (shouldNotify) {
+          await sendRetirementNotice({
+            to: model.user.email,
+            userName: model.user.name,
+            provider: model.provider,
+            modelName: model.modelName,
+            info,
+          });
+          notified++;
+        }
+
+        await prisma.watchedModel.update({
+          where: { id: model.id },
+          data: {
+            retirementDate: info.date,
+            sourceUrl: info.sourceUrl,
+            snippet: info.snippet,
+            lastCheckedAt: now,
+            missCount: 0,
+            ...(shouldNotify ? { notifiedAt: now } : {}),
+          },
+        });
       }
 
-      found++;
-      const dateChanged =
-        !model.retirementDate ||
-        model.retirementDate.getTime() !== info.date.getTime();
-      const shouldNotify = !model.notifiedAt || dateChanged;
+      // 日付付きバージョンはメールだけを送り、登録モデル自体の
+      // retirementDate / notifiedAt には影響させない。
+      const notifiedPartialKeys = new Set(model.notifiedPartialKeys);
+      for (const partial of matches.filter(
+        (match) => match.matchType === "DATED_VARIANT"
+      )) {
+        const notificationKey = `${partial.matchedModelName.toLowerCase()}|${partial.date.toISOString()}`;
+        if (notifiedPartialKeys.has(notificationKey)) continue;
 
-      if (shouldNotify) {
-        await sendRetirementNotice({
+        await sendDatedVariantNotice({
           to: model.user.email,
           userName: model.user.name,
           provider: model.provider,
-          modelName: model.modelName,
-          info,
+          watchedModelName: model.modelName,
+          matchedModelName: partial.matchedModelName,
+          info: partial,
         });
+        await prisma.watchedModel.update({
+          where: { id: model.id },
+          data: { notifiedPartialKeys: { push: notificationKey } },
+        });
+        notifiedPartialKeys.add(notificationKey);
         notified++;
       }
-
-      await prisma.watchedModel.update({
-        where: { id: model.id },
-        data: {
-          retirementDate: info.date,
-          sourceUrl: info.sourceUrl,
-          snippet: info.snippet,
-          lastCheckedAt: now,
-          missCount: 0,
-          ...(shouldNotify ? { notifiedAt: now } : {}),
-        },
-      });
     } catch (e) {
       // 内部エラーの詳細(DB接続情報等が混ざりうる)はログのみに出し、
       // レスポンスには失敗したモデルの識別情報だけを返す

@@ -66,8 +66,8 @@ export default async function DashboardPage() {
         </form>
         <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
           各社の公式 Deprecation ページを1日1回チェックし、提供終了日が公開されたらメールで通知します。
-          モデル名は公式ページの表記(API のモデルID)と完全一致で照合されます。
-          日付付きスナップショット(例: gpt-4o-2024-11-20)を監視する場合はその名前をそのまま入力してください。
+          完全一致したモデルは提供終了日を表示し、日付付き版(例: gpt-4o に対する
+          gpt-4o-2024-11-20)が一致した場合はメールのみでお知らせします。
         </p>
       </section>
 
