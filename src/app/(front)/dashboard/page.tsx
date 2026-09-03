@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { DEPRECATION_SOURCES } from "@/lib/scraper";
 import { addWatchedModel, deleteWatchedModel, logout } from "./actions";
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -90,6 +91,14 @@ export default async function DashboardPage() {
                     {" ・ 最終チェック: "}
                     {formatDate(m.lastCheckedAt)}
                   </p>
+                  <a
+                    href={m.sourceUrl ?? DEPRECATION_SOURCES[m.provider][0]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-block text-xs text-blue-600 underline hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                  >
+                    公式の根拠ページを確認
+                  </a>
                   {m.snippet && (
                     <p className="mt-1 line-clamp-2 text-xs text-zinc-500 dark:text-zinc-400">
                       {m.snippet}
