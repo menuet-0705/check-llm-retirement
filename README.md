@@ -1,7 +1,7 @@
 # LLM Retirement Checker
 
 ChatGPT (OpenAI) / Claude (Anthropic) / Gemini (Google) のモデルについて、各社の公式 Deprecation(廃止予定)ページを **1日1回自動チェック**し、登録したモデルの提供終了日が公開されたら**メールで通知**する Web アプリです。
-
+ 
 ## 技術スタック
 
 | 項目 | 使用技術 |
